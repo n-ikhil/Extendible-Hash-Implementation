@@ -1,8 +1,13 @@
 #include<iostream>
 #include<vector>
+#include<stack>
 using namespace std;
 
+//do not change following values
 int transactionIDCount = 1;
+int endOfBucketFlag = -1;
+//
+
 //>>>>>> global parameters. change only these params
 const int maxDirectoryEntriesInMainMemory=1024;
 const int maxSizeOfSSMBucketArray = 1024;
@@ -15,13 +20,49 @@ const string nameOFSelfGeneratedFile = "test_generated.csv";
 
 
 
+//helper functions
+int stringToInt(string s){
+    return stoi(s,nullptr,2);
+}
+
+string intToString(int i){
+    return to_string(i);
+}
+
+string gen_random() {
+    string s="abc";
+    for (size_t i = 0; i < 3; ++i)
+    {
+        int randomChar = rand() % (26 + 26);
+        if (randomChar < 26)
+            s[i] = 'a' + randomChar;
+        else if (randomChar < 26 + 26)
+            s[i] = 'A' + randomChar - 26;
+        else
+            s[i] = 'z';
+    }
+    return s;
+}
+
+class Entry{
+    public:
+    int hashPrefix;
+    int bucketIndex;
+        Entry();
+        Entry(string, int); 
+        // used only during directory expansion. appends 0 to end of hashprefix
+        void updateEntry(); 
+        // used only during directory expansion. append 1 to end of input hashprefix.
+        void deriveFromEntry(Entry); 
+};
 class Record{
+    public:
+
     int transactionID;
     int amount;
     int category;
     string name;
     
-    public:
         //dummy constructor
         Record();
         //derive record type from entry type for directory overflow
@@ -36,67 +77,65 @@ class Record{
         bool asDirectoryDeriveFromParent(Record);
 };
 
+int getHashValue(Record r, int depth){
+    bitset<16> bnum(r.transactionID);
+    string bstring = bnum.to_string();
+    bstring = bstring.substr(0, depth);
+    return stringToInt(bstring);
+}
 class Bucket
 {
+    public:
     int size;
     int curEmptySpace;
     int localDepth;
     int next;
     Record *data;
-    public:
     // initialize new bucket based on record/entry
     void setBucket(int);
     // add a record into the bucket
     bool addRecord(Record);
-    void setNextBucket(Bucket *);// 
+    // this is called by bucket, which wants to set next bucket in the chain, pass index of new link
+    void setNextBucket(int);//
+    //used when local splitting
+    void resetBucket();
 };
 
 class SSM{
+    public:
+
     int size;
     int curRecordsBucketPosition;
     int curEntryBucketPosition;
     vector<int> freedBuckets;
     Bucket *data;
 
-public:
     SSM();
     bool insertAsRecord(Record, int,bool);
     bool insertAsDirectory(Record, int);
     int insertBucket(bool);
-    bool isDirectoryExpansionRequired(int); // given index of bucket, checks if directory expansion is required;
+    bool isDirectoryExpansionRequired(int,int); // given index of bucket, checks if directory expansion is required;
     vector<Record> getCompleteRecordsOfBucketsLinked(int);// gives list of buckets, also overflown.
     void resetBucketsLinked(int);// resets all the buckets to nil, also adds them to freed buckets except first bucket
-
-private:
-    int getIndexForDirectory(int); // fill from the last;
 };
 
-class Entry{
-    public:
-    int hashPrefix;
-    int bucketIndex;
-        Entry();
-        Entry(string, int); 
-        // used only during directory expansion. appends 0 to end of hashprefix
-        void updateEntry(); 
-        // used only during directory expansion. append 1 to end of input hashprefix.
-        void deriveFromEntry(Entry); 
-};
+
 
 class DirectoryTable{
+    public:
+
     int size;
     int curSize;
     int depth;
     vector<Entry*> data;
 
-public:
-    DirectoryTable(SSM);
-    int getBucketIndex(Record,SSM);
-    void expandDirectory(SSM);// p1
-    void rearrangeAfterLocalSplit(int, int);
+    DirectoryTable(SSM*);
+    int getBucketIndex(Record,SSM*);
+    void expandDirectory(SSM*);// p1
+    void rearrangeAfterLocalSplit(int, int,SSM *);
 
 private:
-    bool insertEntry(Entry*,SSM);// p1
+    bool insertEntry(Entry*,SSM*);// p1
     bool createDirectoryEntry();
 };
 
@@ -126,6 +165,13 @@ class Util
     }
 };
 
+pair<int,int> getSSMBucketIndexOffsetForDirectory(int i){
+    int ssmIndex, bucketOffset;
+    bucketOffset = (i - (maxDirectoryEntriesInMainMemory - 1)) % (maxBucketCapacityForDirectoryEntries + 1);
+    ssmIndex = ceil((i - (maxDirectoryEntriesInMainMemory - 1)) / maxBucketCapacityForDirectoryEntries)-1;
+    return make_pair(ssmIndex, bucketOffset);
+}
+
 int main()
 {
     Util util;
@@ -134,22 +180,22 @@ int main()
 
 
 // extendible hash class declarations begin >>>>>>>>>>>>>>>>>>>>
-ExtendibleHash::ExtendibleHash():ssm(),dTable(ssm){}
+ExtendibleHash::ExtendibleHash():ssm(),dTable(nullptr){}
 void ExtendibleHash::insertAsLoop(vector<Record> data, bool isLogged){
     for (int i = 0; i < data.size();i++){
-        insertRecord(data[i]);
+        insertRecord(data[i],true);
         if(isLogged)
             visualize();
     }
 }
 void ExtendibleHash::insertRecord(Record data,bool isFirst=true){
-    int bIndex = dTable.getBucketIndex(data,this->ssm);
+    int bIndex = dTable.getBucketIndex(data,&this->ssm);
     bool inserted=ssm.insertAsRecord(data, bIndex,!isFirst);
     if(!inserted){
         if(isFirst){
-            bool directoryExpansionRequired = ssm.isDirectoryExpansionRequired(bIndex);
+            bool directoryExpansionRequired = ssm.isDirectoryExpansionRequired(bIndex,dTable.depth);
             if(directoryExpansionRequired){
-                dTable.expandDirectory(this->ssm);
+                dTable.expandDirectory(&this->ssm);
             }
         }
         // internal table splitting
@@ -157,10 +203,13 @@ void ExtendibleHash::insertRecord(Record data,bool isFirst=true){
 
         vector<Record> rehashableRecords = ssm.getCompleteRecordsOfBucketsLinked(bIndex);
         ssm.resetBucketsLinked(bIndex);
+        int curLocalDepth = ssm.data[bIndex].localDepth;
         rehashableRecords.push_back(data);
         // re arrange the directory table entries below
         int newBucketIndex=ssm.insertBucket(true);
-        dTable.rearrangeAfterLocalSplit(bIndex, newBucketIndex);
+        //set local depths after splitting
+        ssm.data[bIndex].localDepth = ssm.data[newBucketIndex].localDepth = curLocalDepth + 1;
+        dTable.rearrangeAfterLocalSplit(bIndex, newBucketIndex, &ssm);
         // insert the records once again, forcefully
         while (!rehashableRecords.empty())
         {
@@ -205,6 +254,39 @@ int SSM::insertBucket(bool isRecordType=true){
     }
     return newIndex;
 }
+bool SSM::insertAsRecord(Record r, int bIndex,bool forced){
+    if(data[bIndex].next!=endOfBucketFlag){
+        return insertAsRecord(r, data[bIndex].next, forced);
+    }
+    if(!data[bIndex].addRecord(r)){
+        if(forced){
+            int nextIndex = insertBucket(true);
+            data[bIndex].setNextBucket(nextIndex);
+            data[nextIndex].addRecord(r);
+            return true;
+        }
+    }
+    return false;
+}
+bool SSM::insertAsDirectory(Record r,int i){
+    int ssmIndex, bucketOffset;
+    pair<int, int> temp = getSSMBucketIndexOffsetForDirectory(i);
+    ssmIndex = temp.first;
+    bucketOffset = temp.second;
+    data[ssmIndex].data[bucketOffset] = r;
+    return true;
+}
+
+bool SSM::isDirectoryExpansionRequired(int localDept,int dTableDepth){
+    return localDept == dTableDepth;
+}
+void SSM::resetBucketsLinked(int startingIndex){
+    if(startingIndex==endOfBucketFlag)
+        return;
+    int nextIndex = data[startingIndex].next;
+    // freedbucket functionality remains here
+    data[startingIndex].resetBucket();
+}
 // ssm class declaration end <<<<<<<<<<<<<<<<<<<<<<
 
 // bucket class declarations begin >>>>>>>>>>>>>>>>>>>>
@@ -212,6 +294,7 @@ void Bucket::setBucket(int newSize){
     size = newSize;
     curEmptySpace = newSize;
     data = new Record[curEmptySpace];
+    next = endOfBucketFlag;
 }
 bool Bucket::addRecord(Record data){
     if(curEmptySpace==0)
@@ -222,28 +305,32 @@ bool Bucket::addRecord(Record data){
     }
     return true;
 }
+void Bucket::setNextBucket(int nextIndex){
+    this->next=nextIndex;
+    
+}
 // bucket class declarations end <<<<<<<<<<<<<<<<<<<<<<<
 
 //Directory table declarations begin >>>>>>>>>>>>>>>>>>>>>>>
-DirectoryTable::DirectoryTable(SSM ssm){
+DirectoryTable::DirectoryTable(SSM *ssm){
     size = maxDirectoryEntriesInMainMemory;
     depth = 0;
     curSize = 0;
     Entry *e = new Entry("", 0);
     insertEntry(e,ssm);
 }
-bool DirectoryTable::insertEntry(Entry *data,SSM ssm){
+bool DirectoryTable::insertEntry(Entry *data,SSM *ssm){
     if(curSize<size){
         this->data.push_back(data);
         curSize++;
     }
     else{
         Record newRecord(*data);
-        ssm.insertAsDirectory(newRecord,++curSize);
+        ssm->insertAsDirectory(newRecord,++curSize);
     }
+    return true;
 }
-
-void DirectoryTable::expandDirectory(SSM ssm){
+void DirectoryTable::expandDirectory(SSM *ssm){
     int curSize = data.size();
     for (int i = 0; i < curSize;i++){
         Entry *curEntry = data[i], *newEntry;
@@ -253,6 +340,58 @@ void DirectoryTable::expandDirectory(SSM ssm){
         insertEntry(newEntry,ssm);
     }
     ++depth;
+}
+int DirectoryTable::getBucketIndex(Record r, SSM *ssm){
+    int hashedVal = getHashValue(r, this->depth);
+    // this loop is coupled with rearrgange after local split
+    for (int i = 0; i < curSize;i++){
+        if(i<maxDirectoryEntriesInMainMemory){
+            if(data[i]->hashPrefix==hashedVal){
+                return data[i]->bucketIndex;
+            }
+        }
+        else{
+            int ssmIndex, bucketOffset;
+            pair<int, int> temp = getSSMBucketIndexOffsetForDirectory(i);
+            ssmIndex = temp.first;
+            bucketOffset = temp.second;
+            if (ssm[ssmIndex].data->data[bucketOffset].transactionID == hashedVal)
+            {
+                return ssm[ssmIndex].data->data[bucketOffset].amount;
+            }
+        }
+    }
+    exit(1);
+}
+void DirectoryTable::rearrangeAfterLocalSplit(int parentIndex,int childIndex,SSM * ssm){
+    stack<int> pointsToparentIndex;
+    // this loop is coupled with get bindex
+    for (int i = 0; i < curSize;i++){
+        if(i<maxDirectoryEntriesInMainMemory){
+            if(data[i]->bucketIndex==parentIndex){
+                pointsToparentIndex.push(i);
+            }
+        }
+        else{
+            int ssmIndex, bucketOffset;
+            pair<int, int> temp = getSSMBucketIndexOffsetForDirectory(i);
+            ssmIndex = temp.first;
+            bucketOffset = temp.second;
+            if(ssm[ssmIndex].data->data[bucketOffset].amount==parentIndex){
+                pointsToparentIndex.push(i);
+            }
+        }
+    }
+    int stackMaxSize = pointsToparentIndex.size();
+    while(pointsToparentIndex.size()>(stackMaxSize/2)){
+        int i = pointsToparentIndex.top();
+        pointsToparentIndex.pop();
+        int ssmIndex, bucketOffset;
+            pair<int, int> temp = getSSMBucketIndexOffsetForDirectory(i);
+            ssmIndex = temp.first;
+            bucketOffset = temp.second;
+            ssm[ssmIndex].data->data[bucketOffset].amount = childIndex;
+    }
 }
 //Directory table declarations end <<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -272,9 +411,11 @@ bool Record::asDirectoryDeriveFromParent(Record r){
     transactionID = r.transactionID << 1;
     transactionID++;
     amount = r.amount;
+    return true;
 }
 bool Record::asDirectoryUpdateHashPrefix(int i){
     transactionID <<= 1;
+    return true;
 }
 Record Record::generateRandomRecord(int i){
     int transactionID = transactionIDCount++;
@@ -302,26 +443,3 @@ void Entry::updateEntry() {
 //Entry class declarations end <<<<<<<<<<<<<<<<<<<<<<<<<<
 
 
-//helper functions
-int stringToInt(string s){
-    return stoi(s,nullptr,2);
-}
-
-string intToString(int i){
-    return to_string(i);
-}
-
-string gen_random() {
-    string s="abc";
-    for (size_t i = 0; i < 3; ++i)
-    {
-        int randomChar = rand() % (26 + 26);
-        if (randomChar < 26)
-            s[i] = 'a' + randomChar;
-        else if (randomChar < 26 + 26)
-            s[i] = 'A' + randomChar - 26;
-        else
-            s[i] = 'z';
-    }
-    return s;
-}

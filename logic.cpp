@@ -18,10 +18,10 @@ bool development = false;
 //
 
 //>>>>>> global parameters. change only these params
-const int maxDirectoryEntriesInMainMemory=1;
-const int maxSizeOfSSMBucketArray = 100;
-const int maxBucketCapacityForRecords = 1;
-const int maxBucketCapacityForDirectoryEntries=1;
+const int maxDirectoryEntriesInMainMemory=4;
+const int maxSizeOfSSMBucketArray = 1000000;
+const int maxBucketCapacityForRecords = 2;
+const int maxBucketCapacityForDirectoryEntries=2;
 const string nameOfTAInputFile = "test.csv";
 const int countRandomRecord = 200;
 const string nameOFSelfGeneratedFile = "test_generated.csv";
@@ -493,45 +493,49 @@ class ExtendibleHash{
     }
     void visualize(){
         // first print directory table
-        cout << endl
-             << "Directory table begin >>>>>>>>>>>>>>>" << endl;
+        
+        for (int i = 0; i < dTable.curSize; i++)
+        {
+            cout << endl
+             <<"Table entry: "<<i<< " -----------------------------------" << endl;
         cout << "depth\t"
              << "index\t"
              << "loc\t"
              << "hash\t"
              << "points" << endl;
-        for (int i = 0; i < dTable.curSize; i++)
+        int bIndex;
+        if (i < maxDirectoryEntriesInMainMemory)
         {
-            if(i<maxDirectoryEntriesInMainMemory){
-                cout <<dTable.depth<<"\t"<<i<<"\t"<<"MM"<<"\t"<<intToString(dTable.data[i].hashPrefix,dTable.depth) << "\t" << dTable.data[i].bucketIndex << endl;
-            }
+            bIndex = dTable.data[i].bucketIndex;
+            cout << dTable.depth << "\t" << i << "\t"
+                 << "MM"
+                 << "\t" << intToString(dTable.data[i].hashPrefix, dTable.depth) << "\t" << bIndex << endl;
+        }
             else{
                 pair<int, int> ssmEntry = getSSMBucketIndexOffsetForDirectory(i);
-                cout <<dTable.depth<<"\t"<<i<<"\t"<<"SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
+                bIndex= ssm.data[ssmEntry.first].data[ssmEntry.second].amount;
+                cout <<dTable.depth<<"\t("<<ssmEntry.first<<","<<ssmEntry.second<<")SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
                 // cout << ssmEntry.first<<") "<<ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount << endl;
             }
-        }
-        cout<<endl << "Directory table end <<<<<<<<<<<<" << endl
-            << endl;
-
-        cout<<endl << " SSM Begin >>>>>>>>>>>>>>>>>>>" << endl;
-        cout << "ldepth\t"
+            cout << "\nbucket : "<<bIndex << endl;
+            cout << "ldepth\t"
              << "index\t"
              <<"sub-index\t"
              << "tid string\t"
              << "record\t"
-             << endl;
-        for (int i = 0; i < ssm.curEntryBucketPosition;i++){
-            if(!ssm.data[i].isStale && ssm.data[i].curEmptySpace!=ssm.data[i].size)
-            for (int j = 0; j < ssm.data[i].data.size()-ssm.data[i].curEmptySpace;j++){
-                Record r = ssm.data[i].data[j];
-                cout <<ssm.data[i].localDepth<<"\t"<<i<<"\t"<<j<<"\t"<<getHashValueAsString(r,16)<<"\t"<<r<< endl;
-                // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
-                // cout << "depth" << ssm.data[i].localDepth << endl;
-            }
+             << endl;             
+            if (!ssm.data[bIndex].isStale && ssm.data[bIndex].curEmptySpace != ssm.data[bIndex].size)
+                for (int j = 0; j < ssm.data[bIndex].data.size() - ssm.data[bIndex].curEmptySpace; j++)
+                {
+                    Record r = ssm.data[bIndex].data[j];
+                    cout << ssm.data[bIndex].localDepth << "\t" << bIndex << "\t" << j << "\t" << getHashValueAsString(r, 16) << "\t" << r << endl;
+                    // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
+                    // cout << "depth" << ssm.data[i].localDepth << endl;
+                }
+        cout<<endl << "---------------------------------------------------"<< endl
+            << endl;
         }
-        cout<<endl << " SSM END >>>>>>>>>>>>>>>>>>>" << endl;
-
+        cout << "Note : MM-> main memory, SSM-> secondary simulated memory in 'loc' column.\n'Index' in ssm is (bucket index, bucket internal subindex)\n" << endl;
     }
 };
 
@@ -558,7 +562,7 @@ int main()
     Util util;
     vector<Record> test;
     Record r;
-    for (int i = 0; i < 100;i++)
+    for (int i = 0; i < 16;i++)
     {
         r = generateRandomRecord(1);
         test.push_back(r);

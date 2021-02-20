@@ -14,12 +14,10 @@ class Util
         vector<Record> records;
         while (fin >> temp)
         {
-            row.clear();
             stringstream s(temp);
-
-            while(getline(s, word, ','))
+            row.clear();
+            while (getline(s, word, ','))
                 row.push_back(word);
-
             Record record(stoi(row[0]),stoi(row[1]),stoi(row[2]),row[3]);
             records.push_back(record);
         }

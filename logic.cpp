@@ -3,11 +3,7 @@
 #include<stack>
 using namespace std;
 
-/*to do
 
-entry overflow to ssm, issue= no init of bucket happening
-
-*/
 
 //do not change following values
 int transactionIDCount = 1;
@@ -18,13 +14,12 @@ bool development = false;
 //
 
 //>>>>>> global parameters. change only these params
-const int maxDirectoryEntriesInMainMemory=1;
-const int maxSizeOfSSMBucketArray = 100;
-const int maxBucketCapacityForRecords = 1;
-const int maxBucketCapacityForDirectoryEntries=1;
-const string nameOfTAInputFile = "test.csv";
-const int countRandomRecord = 200;
-const string nameOFSelfGeneratedFile = "test_generated.csv";
+const int maxDirectoryEntriesInMainMemory=1024;
+const int maxSizeOfSSMBucketArray = 100000;
+const int maxBucketCapacityForRecords = 5;
+const int maxBucketCapacityForDirectoryEntries=4;
+const string nameOfInputFile = "dataset.csv"; //used by runner.cpp
+const string nameOfOutputFile = "dataset.csv";// used by generate.coo
 //<<<<<< do not change any other values apart from these
 
 
@@ -130,8 +125,7 @@ ostream &operator<<(std::ostream &os,Record r) {
     return os <<"("<<r.transactionID<<","<<r.name<<","<<r.category<<","<<r.amount<<")";
 }
 
-Record generateRandomRecord(int i){
-        int transactionID = transactionIDCount++;
+Record generateRandomRecord(int transactionID){
         int category = rand()%1500;
         int amount = rand()%50000;
         string name = gen_random();
@@ -146,14 +140,21 @@ Record generateRandomRecord(int i){
 //     return stringToInt(bstring);
 // }
 
-// for lsb
-
 string getHashValueAsString(Record r, int depth){
     bitset<16> bnum(r.transactionID);
     string bstring = bnum.to_string();
-    bstring = bstring.substr(bstring.length()-depth);
+    bstring = bstring.substr(0, depth);
     return bstring;
 }
+
+// for lsb
+
+// string getHashValueAsString(Record r, int depth){
+//     bitset<17> bnum(r.transactionID);
+//     string bstring = bnum.to_string();
+//     bstring = bstring.substr(bstring.length()-depth);
+//     return bstring;
+// }
 
 int getHashValue(Record r, int depth){
     string bstring = getHashValueAsString(r, depth);
@@ -163,7 +164,7 @@ int getHashValue(Record r, int depth){
 
 
 string intToString(int i, int depth ){
-    bitset<16> bnum(i);
+    bitset<17> bnum(i);
     string bstring = bnum.to_string();
     bstring = bstring.substr(bstring.length()-depth);
     return bstring;
@@ -212,15 +213,14 @@ void OutOfMemory(){
 class SSM{
     public:
 
-    int size;
     // int curRecordsBucketPosition;
+    int size;
     int curEntryBucketPosition;
-    vector<int> freedBuckets;
-    vector<Bucket> data;
+    Bucket data[maxSizeOfSSMBucketArray];
 
     SSM(){
     size = maxSizeOfSSMBucketArray;
-    data.resize(size);
+    // data.resize(size);
     // curRecordsBucketPosition = 0;
     curEntryBucketPosition = maxSizeOfSSMBucketArray - 1;
     insertBucket(true);
@@ -355,7 +355,7 @@ class DirectoryTable{
         if(development) {
             cout << "input tid:" << r.transactionID << " "
                 << " hashed value:" << hashedVal << endl;
-        }
+        }        
 
         // this loop is coupled with rearrgange after local split
         for (int i = 0; i < curSize;i++){
@@ -446,6 +446,98 @@ class ExtendibleHash{
         return newBucketIndex;
     }
 
+    
+    void visualize(){
+        // first print directory table
+        
+        for (int i = 0; i < dTable.curSize; i++)
+        {
+            cout << endl
+             <<"Table entry: "<<i<< " -----------------------------------" << endl;
+        cout << "depth\t"
+             << "index\t"
+             << "loc\t"
+             << "hash\t"
+             << "points" << endl;
+        int bIndex;
+        if (i < maxDirectoryEntriesInMainMemory)
+        {
+            bIndex = dTable.data[i].bucketIndex;
+            cout << dTable.depth << "\t" << i << "\t"
+                 << "MM"
+                 << "\t" << intToString(dTable.data[i].hashPrefix, dTable.depth) << "\t" << bIndex << endl;
+        }
+        else{
+            pair<int, int> ssmEntry = getSSMBucketIndexOffsetForDirectory(i);
+            bIndex= ssm.data[ssmEntry.first].data[ssmEntry.second].amount;
+            cout <<dTable.depth<<"\t("<<ssmEntry.first<<","<<ssmEntry.second<<")SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
+            // cout << ssmEntry.first<<") "<<ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount << endl;
+        }
+        cout << "\nbucket : "<<bIndex << endl;
+        cout << "ldepth\t"
+            << "tid string\t"
+            << "record\t"
+            << endl;             
+        if (!ssm.data[bIndex].isStale && ssm.data[bIndex].curEmptySpace != ssm.data[bIndex].size){
+        vector<Record> allLinkedRecords;
+        ssm.getCompleteRecordsOfBucketsLinked(bIndex,allLinkedRecords);
+        for (int j = 0; j < allLinkedRecords.size();j++)
+        {
+            Record r = allLinkedRecords[j];
+            cout << ssm.data[bIndex].localDepth << "\t" << getHashValueAsString(r, 17) << "\t" << r << endl;
+            // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
+            // cout << "depth" << ssm.data[i].localDepth << endl;
+        }
+        }
+        cout<<endl << "---------------------------------------------------"<< endl
+            << endl;
+        }
+        cout << "Note : MM-> main memory, SSM-> secondary simulated memory in 'loc' column.\n'Index' in ssm is (bucket index, bucket internal subindex)\n" << endl;
+    }
+
+    void visualize2(){
+        // first print directory table
+        cout << endl
+             << "Directory table begin ----------------------------" << endl;
+        cout << "depth\t"
+             << "index\t"
+             << "loc\t"
+             << "hash\t"
+             << "points" << endl;
+        for (int i = 0; i < dTable.curSize; i++)
+        {
+            if(i<maxDirectoryEntriesInMainMemory){
+                cout <<dTable.depth<<"\t"<<i<<"\t"<<"MM"<<"\t"<<intToString(dTable.data[i].hashPrefix,dTable.depth) << "\t" << dTable.data[i].bucketIndex << endl;
+            }
+            else{
+                pair<int, int> ssmEntry = getSSMBucketIndexOffsetForDirectory(i);
+                cout <<dTable.depth<<"\t("<<ssmEntry.first<<","<<ssmEntry.second<<")SSM\t"<<"SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
+                // cout << ssmEntry.first<<") "<<ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount << endl;
+            }
+        }
+        cout<< endl << " Directory table end ---------------------------- "<< endl
+            << endl;
+
+        cout<<endl << " SSM Begin ----------------------------" << endl;
+        cout << "ldepth\t"
+             << "index\t"
+             <<"sub-index\t"
+             << "tid string\t"
+             << "record\t"
+             << endl;
+        for (int i = 0; i < ssm.curEntryBucketPosition;i++){
+            if(!ssm.data[i].isStale && ssm.data[i].curEmptySpace!=ssm.data[i].size)
+            for (int j = 0; j < ssm.data[i].data.size()-ssm.data[i].curEmptySpace;j++){
+                Record r = ssm.data[i].data[j];
+                cout <<ssm.data[i].localDepth<<"\t"<<i<<"\t"<<j<<"\t"<<getHashValueAsString(r,16)<<"\t"<<r<< endl;
+                // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
+                // cout << "depth" << ssm.data[i].localDepth << endl;
+            }
+        }
+        cout<<endl << " SSM END ----------------------------" << endl;
+
+    }
+
     void insertRecord(Record data){
         int bIndex = dTable.getBucketIndex(data,&this->ssm);
         if(development){
@@ -482,6 +574,7 @@ class ExtendibleHash{
                 if(development){
                     cout << "index :"<<i<<", bucket index is:" << nBIndex << endl;
                 }
+                // to insert forcefully, use true flag
                 bool inserted=ssm.insertAsRecord(temp,nBIndex, true);
                 if(!inserted) {
                     cout << " Memory shortage " << endl;
@@ -491,81 +584,11 @@ class ExtendibleHash{
         }
         return;
     }
-    void visualize(){
-        // first print directory table
-        cout << endl
-             << "Directory table begin >>>>>>>>>>>>>>>" << endl;
-        cout << "depth\t"
-             << "index\t"
-             << "loc\t"
-             << "hash\t"
-             << "points" << endl;
-        for (int i = 0; i < dTable.curSize; i++)
-        {
-            if(i<maxDirectoryEntriesInMainMemory){
-                cout <<dTable.depth<<"\t"<<i<<"\t"<<"MM"<<"\t"<<intToString(dTable.data[i].hashPrefix,dTable.depth) << "\t" << dTable.data[i].bucketIndex << endl;
-            }
-            else{
-                pair<int, int> ssmEntry = getSSMBucketIndexOffsetForDirectory(i);
-                cout <<dTable.depth<<"\t"<<i<<"\t"<<"SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
-                // cout << ssmEntry.first<<") "<<ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount << endl;
-            }
-        }
-        cout<<endl << "Directory table end <<<<<<<<<<<<" << endl
-            << endl;
-
-        cout<<endl << " SSM Begin >>>>>>>>>>>>>>>>>>>" << endl;
-        cout << "ldepth\t"
-             << "index\t"
-             <<"sub-index\t"
-             << "tid string\t"
-             << "record\t"
-             << endl;
-        for (int i = 0; i < ssm.curEntryBucketPosition;i++){
-            if(!ssm.data[i].isStale && ssm.data[i].curEmptySpace!=ssm.data[i].size)
-            for (int j = 0; j < ssm.data[i].data.size()-ssm.data[i].curEmptySpace;j++){
-                Record r = ssm.data[i].data[j];
-                cout <<ssm.data[i].localDepth<<"\t"<<i<<"\t"<<j<<"\t"<<getHashValueAsString(r,16)<<"\t"<<r<< endl;
-                // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
-                // cout << "depth" << ssm.data[i].localDepth << endl;
-            }
-        }
-        cout<<endl << " SSM END >>>>>>>>>>>>>>>>>>>" << endl;
-
-    }
-};
-
-class Util
-{
-    public:
-    void generateRecordsAndStore();
-    void runExtendibleHashWithTAInput();
-    void runExtendibleHashWithSelfGeneratedFileInput();
-
-    void runExtendibleHash(vector<Record> data){
-        ExtendibleHash extendibleHash;
-        extendibleHash.insertAsLoop(data,false);
-        extendibleHash.visualize();
-    }
-    private:
-    vector<Record> loadFromfile(string);
 };
 
 
 
-int main()
-{
-    Util util;
-    vector<Record> test;
-    Record r;
-    for (int i = 0; i < 100;i++)
-    {
-        r = generateRandomRecord(1);
-        test.push_back(r);
-    }
-    util.runExtendibleHash(test);
-    // util.generateRecordsAndStore();
-}
+
 
 
 // extendible hash class declarations begin >>>>>>>>>>>>>>>>>>>>

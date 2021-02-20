@@ -213,15 +213,14 @@ void OutOfMemory(){
 class SSM{
     public:
 
-    int size;
     // int curRecordsBucketPosition;
+    int size;
     int curEntryBucketPosition;
-    vector<int> freedBuckets;
-    vector<Bucket> data;
+    Bucket data[maxSizeOfSSMBucketArray];
 
     SSM(){
     size = maxSizeOfSSMBucketArray;
-    data.resize(size);
+    // data.resize(size);
     // curRecordsBucketPosition = 0;
     curEntryBucketPosition = maxSizeOfSSMBucketArray - 1;
     insertBucket(true);

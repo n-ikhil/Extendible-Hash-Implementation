@@ -51,6 +51,6 @@ int main()
 {
     Util util;
 
-    // util.runExtendibleHashWithFileInput();
-    util.runRandomVector();
+    util.runExtendibleHashWithFileInput();
+    // util.runRandomVector();
 }

@@ -18,10 +18,10 @@ bool development = false;
 //
 
 //>>>>>> global parameters. change only these params
-const int maxDirectoryEntriesInMainMemory=4;
-const int maxSizeOfSSMBucketArray = 1000000;
-const int maxBucketCapacityForRecords = 2;
-const int maxBucketCapacityForDirectoryEntries=2;
+const int maxDirectoryEntriesInMainMemory=1024;
+const int maxSizeOfSSMBucketArray = 100000;
+const int maxBucketCapacityForRecords = 5;
+const int maxBucketCapacityForDirectoryEntries=4;
 const string nameOfTAInputFile = "test.csv";
 const int countRandomRecord = 200;
 const string nameOFSelfGeneratedFile = "test_generated.csv";
@@ -130,8 +130,7 @@ ostream &operator<<(std::ostream &os,Record r) {
     return os <<"("<<r.transactionID<<","<<r.name<<","<<r.category<<","<<r.amount<<")";
 }
 
-Record generateRandomRecord(int i){
-        int transactionID = transactionIDCount++;
+Record generateRandomRecord(int transactionID){
         int category = rand()%1500;
         int amount = rand()%50000;
         string name = gen_random();
@@ -146,14 +145,21 @@ Record generateRandomRecord(int i){
 //     return stringToInt(bstring);
 // }
 
-// for lsb
-
 string getHashValueAsString(Record r, int depth){
     bitset<16> bnum(r.transactionID);
     string bstring = bnum.to_string();
-    bstring = bstring.substr(bstring.length()-depth);
+    bstring = bstring.substr(0, depth);
     return bstring;
 }
+
+// for lsb
+
+// string getHashValueAsString(Record r, int depth){
+//     bitset<17> bnum(r.transactionID);
+//     string bstring = bnum.to_string();
+//     bstring = bstring.substr(bstring.length()-depth);
+//     return bstring;
+// }
 
 int getHashValue(Record r, int depth){
     string bstring = getHashValueAsString(r, depth);
@@ -163,7 +169,7 @@ int getHashValue(Record r, int depth){
 
 
 string intToString(int i, int depth ){
-    bitset<16> bnum(i);
+    bitset<17> bnum(i);
     string bstring = bnum.to_string();
     bstring = bstring.substr(bstring.length()-depth);
     return bstring;
@@ -355,7 +361,7 @@ class DirectoryTable{
         if(development) {
             cout << "input tid:" << r.transactionID << " "
                 << " hashed value:" << hashedVal << endl;
-        }
+        }        
 
         // this loop is coupled with rearrgange after local split
         for (int i = 0; i < curSize;i++){
@@ -511,27 +517,30 @@ class ExtendibleHash{
                  << "MM"
                  << "\t" << intToString(dTable.data[i].hashPrefix, dTable.depth) << "\t" << bIndex << endl;
         }
-            else{
-                pair<int, int> ssmEntry = getSSMBucketIndexOffsetForDirectory(i);
-                bIndex= ssm.data[ssmEntry.first].data[ssmEntry.second].amount;
-                cout <<dTable.depth<<"\t("<<ssmEntry.first<<","<<ssmEntry.second<<")SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
-                // cout << ssmEntry.first<<") "<<ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount << endl;
-            }
-            cout << "\nbucket : "<<bIndex << endl;
-            cout << "ldepth\t"
-             << "index\t"
-             <<"sub-index\t"
-             << "tid string\t"
-             << "record\t"
-             << endl;             
-            if (!ssm.data[bIndex].isStale && ssm.data[bIndex].curEmptySpace != ssm.data[bIndex].size)
-                for (int j = 0; j < ssm.data[bIndex].data.size() - ssm.data[bIndex].curEmptySpace; j++)
-                {
-                    Record r = ssm.data[bIndex].data[j];
-                    cout << ssm.data[bIndex].localDepth << "\t" << bIndex << "\t" << j << "\t" << getHashValueAsString(r, 16) << "\t" << r << endl;
-                    // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
-                    // cout << "depth" << ssm.data[i].localDepth << endl;
-                }
+        else{
+            pair<int, int> ssmEntry = getSSMBucketIndexOffsetForDirectory(i);
+            bIndex= ssm.data[ssmEntry.first].data[ssmEntry.second].amount;
+            cout <<dTable.depth<<"\t("<<ssmEntry.first<<","<<ssmEntry.second<<")SSM\t"<<intToString(ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID,dTable.depth) << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount<< endl;
+            // cout << ssmEntry.first<<") "<<ssm.data[ssmEntry.first].data[ssmEntry.second].transactionID << "\t" << ssm.data[ssmEntry.first].data[ssmEntry.second].amount << endl;
+        }
+        cout << "\nbucket : "<<bIndex << endl;
+        cout << "ldepth\t"
+            << "index\t"
+            <<"sub-index\t"
+            << "tid string\t"
+            << "record\t"
+            << endl;             
+        if (!ssm.data[bIndex].isStale && ssm.data[bIndex].curEmptySpace != ssm.data[bIndex].size){
+        vector<Record> allLinkedRecords;
+        ssm.getCompleteRecordsOfBucketsLinked(bIndex,allLinkedRecords);
+        for (int j = 0; j < allLinkedRecords.size();j++)
+        {
+            Record r = allLinkedRecords[j];
+            cout << ssm.data[bIndex].localDepth << "\t" << bIndex << "\t" << j << "\t" << getHashValueAsString(r, 17) << "\t" << r << endl;
+            // cout <<i<<") "<< r.transactionID << " " << r.name << " " << r.transactionID << " " << r.category << endl;
+            // cout << "depth" << ssm.data[i].localDepth << endl;
+        }
+        }
         cout<<endl << "---------------------------------------------------"<< endl
             << endl;
         }
@@ -556,21 +565,20 @@ class Util
 };
 
 
-
 int main()
 {
     Util util;
     vector<Record> test;
     Record r;
-    for (int i = 0; i < 16;i++)
+
+    for (int i = 1; i < 10;i++)
     {
-        r = generateRandomRecord(1);
+        r = generateRandomRecord(i);
         test.push_back(r);
     }
     util.runExtendibleHash(test);
     // util.generateRecordsAndStore();
 }
-
 
 // extendible hash class declarations begin >>>>>>>>>>>>>>>>>>>>
 

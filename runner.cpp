@@ -35,7 +35,7 @@ class Util
     vector<Record> test;
     Record r;
 
-    for (int i = 1; i < 400;i++)
+    for (int i = 1; i < 100;i++)
     {
         int j = rand() % 65000;
         r = generateRandomRecord(j);

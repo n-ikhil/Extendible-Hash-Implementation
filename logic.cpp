@@ -14,7 +14,7 @@ bool development = false;
 //
 
 //>>>>>> global parameters. change only these params
-const int maxDirectoryEntriesInMainMemory=10;
+const int maxDirectoryEntriesInMainMemory=1024;
 const int maxSizeOfSSMBucketArray = 100000;
 const int maxBucketCapacityForRecords = 5;
 const int maxBucketCapacityForDirectoryEntries=4;
